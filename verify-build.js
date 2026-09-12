@@ -36,6 +36,7 @@ const REQUIRED_MARKERS = [
   'MarkovEngine',
   'validateLearnUrl',
   'class Brain1',
+  'nativePromise',
 ];
 
 function collectFiles(dir, exts) {
@@ -95,8 +96,40 @@ function checkStaleness() {
   return problems;
 }
 
+function checkNoBareCapacitorImports() {
+  const problems = [];
+  const files = collectFiles(SOURCE_WWW, ['.js', '.html', '.mjs']);
+  // Matches only a real import statement at the start of a line
+  // (optionally indented) — deliberately does NOT match the same
+  // text appearing inside a comment or string, so this doesn't
+  // false-positive on files that document the bug in a code example.
+  const bareImportRe = /^[ \t]*import\s+.*?from\s+['"](@capacitor\/[^'"]+)['"]/gm;
+  for (const file of files) {
+    const content = readFileSync(file, 'utf8');
+    let match;
+    while ((match = bareImportRe.exec(content)) !== null) {
+      problems.push(
+        `${file}: imports '${match[1]}' as a bare specifier. This project has no ` +
+        `bundler, so this will throw "Failed to resolve module specifier" at runtime ` +
+        `in a real WebView (Node's module resolution masks this — it only fails in an ` +
+        `actual browser). Use window.Capacitor.Plugins.<Name> or ` +
+        `Capacitor.nativePromise(...) directly instead (see nativeHttp.js / storage.js).`
+      );
+    }
+  }
+  return problems;
+}
+
 function main() {
-  console.log('Step 1/3: checking all imports inside src/www/ stay inside webDir...\n');
+  console.log('Step 1/4: checking for bare @capacitor/* imports (these cannot resolve without a bundler)...\n');
+  const bareImportProblems = checkNoBareCapacitorImports();
+  if (bareImportProblems.length > 0) {
+    console.error(`FAIL: found bare @capacitor/* import(s).\n\n${bareImportProblems.join('\n\n')}\n\nDO NOT proceed until this passes.`);
+    process.exit(1);
+  }
+  console.log('PASS: no bare @capacitor/* imports found.\n');
+
+  console.log('Step 2/4: checking all imports inside src/www/ stay inside webDir...\n');
   const importProblems = checkImportsStayInsideWebDir();
   if (importProblems.length > 0) {
     console.error(
@@ -107,7 +140,7 @@ function main() {
   }
   console.log('PASS: all imports resolve inside webDir.\n');
 
-  console.log(`Step 2/3: checking ${ANDROID_ASSETS} contains real app logic...\n`);
+  console.log(`Step 3/4: checking ${ANDROID_ASSETS} contains real app logic...\n`);
   if (!existsSync(ANDROID_ASSETS)) {
     console.error(`FAIL: ${ANDROID_ASSETS} does not exist yet. Run \`npx cap sync android\` first.`);
     process.exit(1);
@@ -129,7 +162,7 @@ function main() {
   }
   console.log(`PASS: all required markers found across ${assetFiles.length} synced file(s).\n`);
 
-  console.log('Step 3/3: checking synced assets are not stale...\n');
+  console.log('Step 4/4: checking synced assets are not stale...\n');
   const stale = checkStaleness();
   if (stale.length > 0) {
     console.error(`FAIL: synced assets are STALE.\n\nMismatches:\n  ${stale.join('\n  ')}\n\nRun \`npx cap sync android\` again.`);

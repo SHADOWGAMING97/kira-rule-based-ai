@@ -14,7 +14,7 @@
  * exactly the kind of thing that should be visible for review.
  */
 
-import { CapacitorHttp } from '@capacitor/core';
+import { nativeHttpGet } from './nativeHttp.js';
 import { redactPii } from './security.js';
 import { extractKeywords } from './confidenceEngine.js';
 import { logEvent } from './auditLog.js';
@@ -81,7 +81,7 @@ async function fetchLink(url) {
   }
 
   try {
-    const response = await CapacitorHttp.get({
+    const response = await nativeHttpGet({
       url,
       connectTimeout: FETCH_TIMEOUT_MS,
       readTimeout: FETCH_TIMEOUT_MS,

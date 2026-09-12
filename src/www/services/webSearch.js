@@ -3,16 +3,19 @@
  * Capacitor's native HTTP bridge (same reasoning as the Life Change
  * project's FortyGuard client: native requests aren't subject to
  * WebView CORS policy at all, sidestepping an untestable question
- * rather than gambling on it).
+ * rather than gambling on it). Goes through nativeHttp.js's direct
+ * bridge call rather than importing '@capacitor/core' as a package —
+ * see nativeHttp.js for why the package import doesn't work in this
+ * bundler-free project.
  */
 
-import { CapacitorHttp } from '@capacitor/core';
+import { nativeHttpGet } from './nativeHttp.js';
 
 export const MAX_FETCH_BYTES = 200_000; // matches Python's bounded-read cap
 export const REQUEST_TIMEOUT_MS = 6000;
 
 async function fetchUrl(url, timeoutMs = REQUEST_TIMEOUT_MS) {
-  const response = await CapacitorHttp.get({
+  const response = await nativeHttpGet({
     url,
     headers: { 'User-Agent': 'Kira-Brain1/1.0 (personal assistant)' },
     connectTimeout: timeoutMs,

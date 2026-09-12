@@ -155,16 +155,43 @@
 
 <footer>
   <textarea id="composer" rows="1" placeholder="Message Kira..."></textarea>
-  <button id="send">Send</button>
+  <button id="send" disabled>Loading...</button>
 </footer>
 
+<script>
+  // Runs unconditionally, even if the module script below fails to
+  // load or parse (e.g. an import error). This is the fix for the
+  // real bug found in this round: a bare `import ... from
+  // '@capacitor/core'` specifier can't resolve without a bundler, so
+  // it threw at parse time and silently killed the ENTIRE module
+  // script below — the button never got its listener wired, so
+  // tapping Send did nothing with zero visible feedback. This global
+  // handler guarantees the person sees an actual error instead of a
+  // dead button.
+  window.addEventListener('error', (e) => {
+    if (window.__kiraModuleLoaded) return; // real runtime errors after load are handled inside the module
+    const sendBtn = document.getElementById('send');
+    const thread = document.getElementById('thread');
+    if (sendBtn) { sendBtn.textContent = 'Error'; sendBtn.disabled = true; }
+    if (thread) {
+      thread.innerHTML = '<div class="empty-state"><div class="glyph">!</div><p>Kira failed to start: '
+        + (e.message || 'unknown error') + '<br><br>Check the app\'s logcat output for the full error.</p></div>';
+    }
+  });
+</script>
+
 <script type="module">
+window.__kiraModuleLoaded = false;
+
 import { Brain1 } from './services/pipeline.js';
+
+window.__kiraModuleLoaded = true;
 
 const thread = document.getElementById('thread');
 const emptyState = document.getElementById('emptyState');
 const composer = document.getElementById('composer');
 const sendBtn = document.getElementById('send');
+sendBtn.textContent = 'Send';
 
 const brain = new Brain1();
 let ready = false;

@@ -5,6 +5,105 @@ following the same pattern as the LSA_Life_Change_Backend Capacitor
 project: plain JS, no bundler, everything co-located inside `webDir`
 from the start.
 
+## Latest pass: real bug found — the APK you installed genuinely couldn't send messages
+
+Manus's handoff document was right that Brain1's JS files were byte-
+identical to the original delivery, and right that the generated
+Android wrapper (manifest, gradle, theme) was the thing to check
+first. I inspected the actual failing APK you uploaded directly
+(unzipped it, byte-compared `assets/public/` against my source,
+parsed the binary `AndroidManifest.xml`) — the wrapper, manifest,
+plugin registration, and synced assets were all genuinely correct.
+
+**The real bug was mine, from the original delivery, not something
+Manus introduced or missed.** `storage.js`, `webSearch.js`, and
+`learnFilter.js` all had:
+
+```js
+import { Preferences } from '@capacitor/preferences';
+import { CapacitorHttp } from '@capacitor/core';
+```
+
+These are **bare module specifiers**. They only resolve inside a
+bundler (Vite/webpack/Rollup) that rewrites them to real paths — this
+project deliberately has no bundler. In a real browser/WebView with
+zero bundler, this throws:
+
+```
+TypeError: Failed to resolve module specifier "@capacitor/core".
+Relative references must start with either "/", "./", or "../".
+```
+
+at **parse time** — which aborts the entire `<script type="module">`
+block before ANY of it runs, including the button's click listener.
+That's exactly why tapping Send did nothing: `Brain1` never loaded,
+the button was never wired up, and there was zero visible error
+because nothing was left running to display one.
+
+**Why this wasn't caught before shipping:** every test in prior rounds
+ran in plain Node with hand-written stub `node_modules` packages for
+`@capacitor/*`. Node's module resolver happily finds bare specifiers
+in `node_modules` — that's normal, correct Node behavior — but it has
+nothing to do with what a real browser can resolve. Testing exclusively
+in Node completely masked a bug that can only appear in an actual
+browser/WebView context. This is a real gap in how "tested" was
+defined in this project's prior rounds, worth being direct about
+rather than glossing over.
+
+### Fix
+
+- **New `nativeHttp.js`** — calls `Capacitor.nativePromise('CapacitorHttp', 'request', {...})`
+  directly (confirmed against the actual `native-bridge.js` shipped
+  inside your uploaded APK — this is exactly what `@capacitor/core`'s
+  own `CapacitorHttp.get()`/`.post()` helpers call internally). No
+  import needed at all.
+- **`storage.js`** — now reads `window.Capacitor.Plugins.Preferences`
+  directly instead of importing the `@capacitor/preferences` package.
+  Throws a clear, actionable error (not a silent crash) if
+  `window.Capacitor` isn't present at all — e.g. previewing in a plain
+  desktop browser during development.
+- **`webSearch.js`, `learnFilter.js`** — now import `nativeHttpGet`
+  from `./nativeHttp.js` (a real relative import, resolves fine)
+  instead of `CapacitorHttp` from `@capacitor/core`.
+- **`index.html`** — added a classic (non-module) `<script>` that
+  installs a `window.onerror` handler before the module script runs.
+  If the module script fails to load for any reason in the future
+  (this bug or a different one), the person now sees an actual visible
+  error message and a disabled "Error" button instead of a dead Send
+  button with zero feedback. Confirmed against Firefox's own module-
+  loading test suite that `window.onerror` does fire for import
+  resolution failures — this isn't a guess.
+- **`verify-build.js`** — added a new Step 1/4 that scans every file
+  under `src/www/` for a real `import ... from '@capacitor/...'`
+  statement (careful to only match actual import lines, not comments
+  that mention the package name — verified against both a false-
+  positive case and a genuine reintroduction of the bug). This is now
+  the very first thing the script checks, specifically so this class
+  of bug can never silently ship again.
+
+### How this was actually verified this time
+
+Every check above was run with **zero `node_modules` present** and a
+**hand-built `window.Capacitor` global matching the real bridge**
+(`Plugins.Preferences` + `nativePromise()`), which is the correct way
+to catch what a real browser would reject — Node without
+`node_modules` behaves like a browser for bare specifiers (both throw
+a "cannot resolve" error), so successfully importing `pipeline.js` in
+that exact configuration is real evidence the fix works, not just a
+Node-shaped illusion of testing. Full 21-check regression suite passed
+in this configuration, and `verify-build.js`'s new bare-import check
+was confirmed to both correctly ignore a documentation comment
+mentioning `@capacitor/core` and correctly catch a real reintroduced
+`import` statement.
+
+**Still not verified: an actual device or emulator run.** This sandbox
+has no browser engine and no Android tooling, so everything above is
+the most rigorous verification possible from here — but it is not the
+same as installing the rebuilt APK and tapping Send for real. Please
+rebuild (`npx cap sync android && node verify-build.js && cd android
+&& ./gradlew assembleDebug`) and test on your device before considering
+this closed.
+
 **Scope: thinking-brain only.** Per explicit instruction, this build
 does NOT include Brain 2 (automation/execution), the Safety Chain, the
 Sandbox, or Sleep Consolidation. The Need Router still classifies
@@ -219,6 +318,7 @@ src/www/                — Capacitor's webDir — this ENTIRE folder is
     selfCheck.js
     needRouter.js
     learnFilter.js           — Sentinel Issue 3 fix
+    nativeHttp.js            — direct Capacitor bridge calls (no bundler needed)
     responseShape.js
     tinyMl.js
     contextMemory.js
